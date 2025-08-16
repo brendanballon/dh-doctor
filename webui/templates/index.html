@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="cards">
+  <div class="card">
+    <h2>Sensor 1</h2>
+      <p>Time: <span id="s1-ts">—</span></p>
+      <p>Value: <span id="s1-val">—</span></p>
+    <table>
+      <thead><tr><th>ts_utc</th><th>value</th></tr></thead>
+      <tbody>
+      {% for ts, val in rows1 %}
+        <tr><td>{{ ts }}</td><td>{{ "%.3f"|format(val) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>Sensor 2</h2>
+      <p>Time: <span id="s2-ts">—</span></p>
+      <p>Value: <span id="s2-val">—</span></p>
+    <table>
+      <thead><tr><th>ts_utc</th><th>value</th></tr></thead>
+      <tbody>
+      {% for ts, val in rows2 %}
+        <tr><td>{{ ts }}</td><td>{{ "%.3f"|format(val) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
