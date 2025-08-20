@@ -1,4 +1,4 @@
-#!/Users/brendanballon/Documents/GitHub/dh-doctor/.venv-webui/bin/python3
+#!/opt/dh-doctor/.venv-webui/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys

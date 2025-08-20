@@ -1,8 +1,167 @@
 {% extends "base.html" %}
 {% block body %}
+<div class="card">  
+  <div id="avgCard">
+  <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.5rem">
+    <label for="rangeSelect">Range</label>
+    <select id="rangeSelect">
+      <option value="1h">Last hour</option>
+      <option value="1d">Last day</option>
+      <option value="7d">Last 7 days</option>
+      <option value="30d">Last 30 days</option>
+    </select>
+  </div>
+
+  <!-- fixed-height wrapper to avoid growth loop -->
+  <div class="chart", style="position:relative;height:220px">
+    <canvas id="avgSeries"></canvas>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
+<script>
+(() => {
+  // Range → sampling and tick policy
+  const RANGE_CFG = {
+    '1h':  { sampleSec: 60,    bucketSec: 60,    tickEvery: 10, label: 'rel' }, // relative labels every 10m
+    '1d':  { sampleSec: 1800,  bucketSec: 1800,  tickEvery: 2,  label: 'h'  },
+    '7d':  { sampleSec: 3600,  bucketSec: 3600,  tickEvery: 24, label: 'md' },
+    '30d': { sampleSec: 7200,  bucketSec: 7200,  tickEvery: 12, label: 'md' }
+  };
+
+  // one chart only
+  if (window.avgLine) { window.avgLine.destroy(); window.avgLine = null; }
+  let poll = null;
+  let inFlight = null;
+
+  const sel = document.getElementById('rangeSelect');
+  const cvs = document.getElementById('avgSeries');
+  cvs.style.width = '100%';
+  cvs.style.height = '100%';
+  cvs.style.display = 'block';
+
+  // Dual-axis: Temp on left (y), RH on right (y2)
+  window.avgLine = new Chart(cvs, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'Temp (°C)', data: [], yAxisID: 'y', spanGaps: true, tension: 0 },
+        { label: 'RH (%)',    data: [], yAxisID: 'y2', spanGaps: true, tension: 0 }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animations: false,
+      spanGaps: false,
+      interaction: { mode: 'index', intersect: false },
+      elements: { point: { radius: 0 } },
+      scales: {
+        x: { type: 'category', ticks: { autoSkip: false, maxRotation: 0 }, grid: { display: true } },
+        y: { beginAtZero: false, title: { display: true, text: '°C' } },
+        y2:{ beginAtZero: true, position: 'right', title: { display: true, text: '%' }, grid: { drawOnChartArea: false } }
+      },
+      plugins: { legend: { display: true } }
+    }
+  });
+
+  function fmt(ts, mode, now, bucketSec) {
+    const d = new Date(ts * 1000);
+    switch (mode) {
+      case 'h':  return d.toLocaleTimeString([], { hour: '2-digit' });
+      case 'hm': return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      case 'md': return d.toLocaleDateString([], { month: '2-digit', day: '2-digit' });
+      case 'rel': {
+        // relative to NOW in minutes, show at 10m steps via tick policy
+        const m = Math.round((ts - now) / 60);
+        if (m === 0) return 'now';
+        return `${m}m`; // negative values like -50m indicate minutes ago
+      }
+      default:   return d.toLocaleString();
+    }
+  }
+
+  function applyXAxisPolicy(rangeKey) {
+    const x = window.avgLine.options.scales.x;
+    x.ticks.autoSkip = false;
+    x.ticks.callback = (val, idx) => window.avgLine.data.labels[idx] ?? '';
+  }
+
+  async function fetchSeries(rangeKey, sensorId, cfg, signal) {
+    const url = new URL('/api/series', location.origin);
+    url.searchParams.set('range', rangeKey);
+    url.searchParams.set('bucket_sec', String(cfg.bucketSec));
+    url.searchParams.set('sample_sec', String(cfg.sampleSec));
+    url.searchParams.set('sensor_id', String(sensorId));
+    url.searchParams.set('_', Date.now());
+    const res = await fetch(url, { cache: 'no-store', signal });
+    if (!res.ok) throw new Error('fetch failed');
+    return res.json(); // {bucket_sec, points:[{ts,avg}]}
+  }
+
+  async function load(rangeKey) {
+    if (inFlight) inFlight.abort();
+    inFlight = new AbortController();
+    const cfg = RANGE_CFG[rangeKey] || RANGE_CFG['1h'];
+    const now = Math.floor(Date.now()/1000);
+
+    // Fetch temp (sensor_id=1) and RH (sensor_id=2) in parallel
+    const [tJson, hJson] = await Promise.all([
+      fetchSeries(rangeKey, 1, cfg, inFlight.signal),
+      fetchSeries(rangeKey, 2, cfg, inFlight.signal)
+    ]);
+
+    const tPts = tJson.points || [];
+    const hPts = hJson.points || [];
+
+    // Assume aligned buckets; build human-friendly x labels
+    let labels;
+    if (rangeKey === '1h') {
+      labels = tPts.map((p) => {
+        const m = Math.round((p.ts - now) / 60);
+        if (m === 0) return 'now';
+        // show only every 10 minutes to avoid crowding; others blank
+        return (m % 10 === 0) ? `${m}m` : '';
+      });
+    } else {
+      labels = tPts.map(p => fmt(p.ts, cfg.label, now, cfg.bucketSec));
+    }
+    const tData  = tPts.map(p => p.avg !== null ? Number(p.avg) : null);
+    const hData  = hPts.map(p => p.avg !== null ? Number(p.avg) : null);
+
+    window.avgLine.data.labels = labels;
+    window.avgLine.data.datasets[0].data = tData; // Temp
+    window.avgLine.data.datasets[1].data = hData; // RH
+
+    applyXAxisPolicy(rangeKey);
+    window.avgLine.update('none');
+  }
+
+  function setPolling(rangeKey) {
+    if (poll) { clearInterval(poll); poll = null; }
+    if (rangeKey === '1h') {
+      poll = setInterval(() => load('1h'), 60 * 1000);
+      document.addEventListener('visibilitychange', visHandler, { once: true });
+    }
+  }
+  function visHandler() { if (!document.hidden) load(sel.value); }
+
+  sel.addEventListener('change', e => {
+    const v = e.target.value;
+    setPolling(v);
+    load(v);
+  });
+
+  // initial
+  setPolling(sel.value);
+  load(sel.value);
+})();
+</script>
+</div>
 <div class="cards">
   <div class="card">
-    <h2>Sensor 1</h2>
+    <h2>Temp</h2>
       <p>Time: <span id="s1-ts">—</span></p>
       <p>Value: <span id="s1-val">—</span></p>
     <table>
@@ -15,7 +174,7 @@
     </table>
   </div>
   <div class="card">
-    <h2>Sensor 2</h2>
+    <h2>RH</h2>
       <p>Time: <span id="s2-ts">—</span></p>
       <p>Value: <span id="s2-val">—</span></p>
     <table>

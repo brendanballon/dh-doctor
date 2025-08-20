@@ -1,4 +1,4 @@
-#!/Users/brendanballon/Documents/GitHub/dh-doctor/.venv-webui/bin/python3
+#!/opt/dh-doctor/.venv-webui/bin/python
 import sys
 from flask.cli import main
 if __name__ == '__main__':

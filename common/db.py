@@ -1,5 +1,6 @@
 # common/db.py
 import sqlite3, pathlib
+from typing import List, Tuple
 
 def init_db(db_path: str, schema_path: str) -> None:
     """Create parent folder, create DB file if missing, apply schema, enable WAL."""
@@ -44,5 +45,35 @@ def get_latest(db_path: str, sensor_id: int, n: int) -> list[tuple[int,float]]:
             (sensor_id, n),
         ).fetchall()
         return rows
+    finally:
+        con.close()
+
+
+def get_bucketed_avg(
+    db_path: str,
+    sensor_id: int,
+    start_ts_utc: int,
+    bucket_sec: int,
+    ) -> List[Tuple[int, float]]:
+    """
+    Returns [(bucket_ts, avg)] where bucket_ts is the start of each bucket in UTC.
+    Only returns buckets that have data. Fill missing buckets in the caller.
+    Table assumed: samples(sensor_id INT, ts_utc INT seconds, value REAL).
+    """
+    start_aligned = (start_ts_utc // bucket_sec) * bucket_sec
+    con = open_read(db_path)
+    try:
+        rows = con.execute(
+            """
+            SELECT (ts_utc / ?) * ? AS bucket_ts,
+                    AVG(value) AS avg_value
+            FROM samples
+            WHERE sensor_id = ? AND ts_utc >= ?
+            GROUP BY bucket_ts
+            ORDER BY bucket_ts
+            """,
+            (bucket_sec, bucket_sec, sensor_id, start_aligned),
+        ).fetchall()
+        return [(int(ts), float(avg)) for ts, avg in rows]
     finally:
         con.close()
