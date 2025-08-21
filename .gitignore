@@ -286,3 +286,4 @@ pyrightconfig.json
 venv/
 
 *.sqlite
+.DS_Store
