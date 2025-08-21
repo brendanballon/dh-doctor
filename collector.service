@@ -1,0 +1,15 @@
+[Unit]
+Description=DH Doctor Collector (USB Modbus polling)
+After=network.target
+
+[Service]
+User=dhd
+WorkingDirectory=/opt/dh-doctor
+ExecStart=/opt/dh-doctor/.venv-collector/bin/python -m collector.main
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
